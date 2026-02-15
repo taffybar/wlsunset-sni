@@ -1,0 +1,60 @@
+cabal-version:      2.4
+name:               wlsunset-sni
+version:            0.1.0.0
+synopsis:           StatusNotifierItem tray icon for controlling wlsunset
+category:           System
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Ivan A. Malison
+maintainer:         Ivan A. Malison
+build-type:         Simple
+
+description:
+  Standalone StatusNotifierItem (SNI) / AppIndicator tray icon for controlling
+  the wlsunset Wayland day/night gamma adjustor.
+
+extra-source-files:
+  README.md
+  CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/taffybar/wlsunset-sni
+
+common common
+  default-language: Haskell2010
+  ghc-options: -Wall
+  build-depends:
+    , base >=4.14 && <5
+
+library
+  import: common
+  hs-source-dirs: src
+  exposed-modules:
+    DBus.Proxy
+    Wlsunset.Process
+    Wlsunset.Menu
+    Wlsunset.SNI
+  build-depends:
+    , bytestring
+    , dbus
+    , gi-dbusmenu
+    , gi-gio
+    , gi-glib
+    , haskell-gi-base
+    , hslogger
+    , process
+    , stm
+    , text
+    , transformers
+    , unix
+    , status-notifier-item
+
+executable wlsunset-sni
+  import: common
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    , hslogger
+    , optparse-applicative
+    , wlsunset-sni
