@@ -79,6 +79,8 @@ newWlsunset wsCfg@WlsunsetConfig {..} = do
   wsStateVar <- newMVar initial
   wsChan <- newBroadcastTChanIO
   let ws = Wlsunset {..}
+  -- Ensure initial state reflects any already-running wlsunset process.
+  pollWlsunset ws
   void $ forkIO $ forever $ do
     pollWlsunset ws
     threadDelay (wlsunsetPollIntervalSec * 1000000)
