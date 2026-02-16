@@ -12,6 +12,7 @@ module Wlsunset.SNI
 where
 
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever, void, when)
@@ -19,6 +20,7 @@ import DBus
 import DBus.Client
   ( Client,
     Interface (..),
+    RequestNameReply (..),
     autoMethod,
     connectSession,
     defaultInterface,
@@ -28,27 +30,15 @@ import DBus.Client
   )
 import DBus.Proxy (proxyAll)
 import qualified Data.ByteString as BS
-import qualified Data.GI.Base as GI
 import Data.Int (Int32)
 import Data.String (fromString)
 import qualified Data.Text as T
-import Foreign.C.Types (CInt (..))
-import Foreign.Ptr (FunPtr, Ptr)
-import Foreign.StablePtr
-  ( StablePtr,
-    castPtrToStablePtr,
-    castStablePtrToPtr,
-    deRefStablePtr,
-    freeStablePtr,
-    newStablePtr,
-  )
 import qualified GI.Dbusmenu as Dbusmenu
 import qualified GI.GLib as GLib
 import qualified GI.Gio as Gio
 import qualified StatusNotifier.Item.Client as I
 import qualified StatusNotifier.Watcher.Client as W
 import System.Exit (exitSuccess)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Log.Logger
   ( Priority (..),
     getRootLogger,
@@ -138,15 +128,26 @@ runWlsunsetSNI cfg@Config {..} = do
                   onResetTemps = restartWlsunsetWithTemps wlsunset configLowTemp configHighTemp,
                   onQuit = exitSuccess
                 }
-        newRoot <- buildMenu wsCfg st actions
+        resultVar <- newEmptyMVar
         runOnGLibMain glibContext $
-          Dbusmenu.serverSetRoot menuServer newRoot
+          ( do
+              newRoot <- buildMenu wsCfg st actions
+              Dbusmenu.serverSetRoot menuServer newRoot
+              putMVar resultVar (Right ())
+          )
+            `catch` (\(e :: SomeException) -> putMVar resultVar (Left e))
+        takeMVar resultVar >>= \case
+          Left e -> fail ("Failed to rebuild menu: " <> show e)
+          Right () -> pure ()
 
   -- Initial menu
   rebuildMenu
 
   exportSNI cfg client path menuPath wlsunset
-  _ <- requestName client (busName_ busName) []
+  nameReply <- requestName client (busName_ busName) []
+  when
+    (nameReply /= NamePrimaryOwner && nameReply /= NameAlreadyOwner)
+    (fail ("Failed to acquire DBus name " <> busName <> ": " <> show nameReply))
 
   -- Proxy the menu from menuBusName onto busName at the same object path, so
   -- hosts can find com.canonical.dbusmenu at busName:/StatusNotifierItem/Menu.
@@ -154,7 +155,11 @@ runWlsunsetSNI cfg@Config {..} = do
 
   -- Register with the watcher (must be done from the same DBus connection that
   -- owns the SNI bus name).
-  void $ W.registerStatusNotifierItem client busName
+  W.registerStatusNotifierItem client busName >>= \case
+    Left methodErr ->
+      fail ("Failed to register StatusNotifierItem: " <> show methodErr)
+    Right _ ->
+      pure ()
 
   -- React to state changes.
   chan <- dupWlsunsetChan wlsunset
@@ -232,49 +237,8 @@ emitSafe io = io `catch` (\(_ :: SomeException) -> pure ())
 -- Schedule work on the GLib main context.
 runOnGLibMain :: GLib.MainContext -> IO () -> IO ()
 runOnGLibMain context action = do
-  sp <- newStablePtr action
-  GI.withManagedPtr context $ \ctxPtr ->
-    c_g_main_context_invoke_full
-      ctxPtr
-      4
-      invokeSourceFunc
-      (castStablePtrToPtr sp)
-      destroyNotifyFunc
-
-type InvokeSourceFunc = Ptr () -> IO CInt
-
-type DestroyNotify = Ptr () -> IO ()
-
-foreign import ccall unsafe "g_main_context_invoke_full"
-  c_g_main_context_invoke_full ::
-    Ptr GLib.MainContext ->
-    CInt ->
-    FunPtr InvokeSourceFunc ->
-    Ptr () ->
-    FunPtr DestroyNotify ->
-    IO ()
-
-foreign import ccall "wrapper"
-  mkInvokeSourceFunc :: InvokeSourceFunc -> IO (FunPtr InvokeSourceFunc)
-
-foreign import ccall "wrapper"
-  mkDestroyNotify :: DestroyNotify -> IO (FunPtr DestroyNotify)
-
-{-# NOINLINE invokeSourceFunc #-}
-invokeSourceFunc :: FunPtr InvokeSourceFunc
-invokeSourceFunc =
-  unsafePerformIO $
-    mkInvokeSourceFunc $ \p -> do
-      let sp :: StablePtr (IO ())
-          sp = castPtrToStablePtr p
-      (deRefStablePtr sp >>= id) `catch` (\(_ :: SomeException) -> pure ())
-      pure 0
-
-{-# NOINLINE destroyNotifyFunc #-}
-destroyNotifyFunc :: FunPtr DestroyNotify
-destroyNotifyFunc =
-  unsafePerformIO $
-    mkDestroyNotify $ \p -> do
-      let sp :: StablePtr (IO ())
-          sp = castPtrToStablePtr p
-      freeStablePtr sp
+  void $
+    GLib.mainContextInvokeFull
+      (Just context)
+      GLib.PRIORITY_DEFAULT
+      (action >> pure False)
