@@ -1,20 +1,24 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Process-level management for @wlsunset@.
+--
+-- This module polls for process liveness, tracks mode transitions, and exposes
+-- actions used by the SNI/menu layers.
 module Wlsunset.Process
-  ( WlsunsetMode (..)
-  , WlsunsetState (..)
-  , WlsunsetConfig (..)
-  , Wlsunset
-  , newWlsunset
-  , getWlsunsetState
-  , dupWlsunsetChan
-  , cycleWlsunsetMode
-  , cycleWlsunsetToMode
-  , startWlsunset
-  , stopWlsunset
-  , toggleWlsunset
-  , restartWlsunsetWithTemps
+  ( WlsunsetMode (..),
+    WlsunsetState (..),
+    WlsunsetConfig (..),
+    Wlsunset,
+    newWlsunset,
+    getWlsunsetState,
+    dupWlsunsetChan,
+    cycleWlsunsetMode,
+    cycleWlsunsetToMode,
+    startWlsunset,
+    stopWlsunset,
+    toggleWlsunset,
+    restartWlsunsetWithTemps,
   )
 where
 
@@ -39,37 +43,38 @@ data WlsunsetMode
 
 -- | Observable state of the wlsunset process.
 data WlsunsetState = WlsunsetState
-  { wlsunsetRunning :: Bool
-  , wlsunsetMode :: WlsunsetMode
-  , wlsunsetEffectiveHighTemp :: Int
-  , wlsunsetEffectiveLowTemp :: Int
+  { wlsunsetRunning :: Bool,
+    wlsunsetMode :: WlsunsetMode,
+    wlsunsetEffectiveHighTemp :: Int,
+    wlsunsetEffectiveLowTemp :: Int
   }
   deriving (Eq, Show)
 
 -- | Configuration for monitoring and starting wlsunset.
 data WlsunsetConfig = WlsunsetConfig
-  { wlsunsetCommand :: String
-  , wlsunsetHighTemp :: Int
-  , wlsunsetLowTemp :: Int
-  , wlsunsetPollIntervalSec :: Int
+  { wlsunsetCommand :: String,
+    wlsunsetHighTemp :: Int,
+    wlsunsetLowTemp :: Int,
+    wlsunsetPollIntervalSec :: Int
   }
   deriving (Eq, Show)
 
 -- | A running wlsunset monitor.
 data Wlsunset = Wlsunset
-  { wsCfg :: WlsunsetConfig
-  , wsStateVar :: MVar WlsunsetState
-  , wsChan :: TChan WlsunsetState
+  { wsCfg :: WlsunsetConfig,
+    wsStateVar :: MVar WlsunsetState,
+    wsChan :: TChan WlsunsetState
   }
 
+-- | Create a new monitor and start a background polling loop.
 newWlsunset :: WlsunsetConfig -> IO Wlsunset
 newWlsunset wsCfg@WlsunsetConfig {..} = do
   let initial =
         WlsunsetState
-          { wlsunsetRunning = False
-          , wlsunsetMode = WlsunsetAuto
-          , wlsunsetEffectiveHighTemp = wlsunsetHighTemp
-          , wlsunsetEffectiveLowTemp = wlsunsetLowTemp
+          { wlsunsetRunning = False,
+            wlsunsetMode = WlsunsetAuto,
+            wlsunsetEffectiveHighTemp = wlsunsetHighTemp,
+            wlsunsetEffectiveLowTemp = wlsunsetLowTemp
           }
   wsStateVar <- newMVar initial
   wsChan <- newBroadcastTChanIO
@@ -79,6 +84,7 @@ newWlsunset wsCfg@WlsunsetConfig {..} = do
     threadDelay (wlsunsetPollIntervalSec * 1000000)
   pure ws
 
+-- | Read the latest observed process state.
 getWlsunsetState :: Wlsunset -> IO WlsunsetState
 getWlsunsetState = readMVar . wsStateVar
 
@@ -124,6 +130,8 @@ pollWlsunset ws = do
 -- Actions
 -- ---------------------------------------------------------------------------
 
+-- | Send @SIGUSR1@ to all running @wlsunset@ processes and advance local mode
+-- state in the Auto -> ForcedHigh -> ForcedLow -> Auto ring.
 cycleWlsunsetMode :: Wlsunset -> IO ()
 cycleWlsunsetMode ws = do
   pids <- pgrepWlsunset
@@ -147,27 +155,33 @@ cyclesToReach from to
     toOrd WlsunsetForcedHighTemp = 1
     toOrd WlsunsetForcedLowTemp = 2
 
+-- | Advance to a target mode by sending the minimum number of @SIGUSR1@
+-- cycles in the standard mode ring.
 cycleWlsunsetToMode :: Wlsunset -> WlsunsetMode -> IO ()
 cycleWlsunsetToMode ws target = do
   st <- getWlsunsetState ws
   replicateM_ (cyclesToReach (wlsunsetMode st) target) (cycleWlsunsetMode ws)
 
+-- | Start @wlsunset@ via the configured shell command.
 startWlsunset :: Wlsunset -> IO ()
 startWlsunset ws = do
   void $ spawnCommand (wlsunsetCommand (wsCfg ws))
   broadcastUpdate ws $ \old -> old {wlsunsetRunning = True, wlsunsetMode = WlsunsetAuto}
 
+-- | Stop all running @wlsunset@ processes with @SIGTERM@.
 stopWlsunset :: Wlsunset -> IO ()
 stopWlsunset ws = do
   pids <- pgrepWlsunset
   mapM_ (signalProcess 15) pids
   broadcastUpdate ws $ \old -> old {wlsunsetRunning = False, wlsunsetMode = WlsunsetAuto}
 
+-- | Stop the process when running, otherwise start it.
 toggleWlsunset :: Wlsunset -> IO ()
 toggleWlsunset ws = do
   st <- getWlsunsetState ws
   if wlsunsetRunning st then stopWlsunset ws else startWlsunset ws
 
+-- | Restart @wlsunset@ with explicit temperature bounds.
 restartWlsunsetWithTemps :: Wlsunset -> Int -> Int -> IO ()
 restartWlsunsetWithTemps ws lowTemp highTemp = do
   pids <- pgrepWlsunset
@@ -176,10 +190,10 @@ restartWlsunsetWithTemps ws lowTemp highTemp = do
   void $ spawnCommand cmd
   broadcastUpdate ws $ \old ->
     old
-      { wlsunsetRunning = True
-      , wlsunsetMode = WlsunsetAuto
-      , wlsunsetEffectiveHighTemp = highTemp
-      , wlsunsetEffectiveLowTemp = lowTemp
+      { wlsunsetRunning = True,
+        wlsunsetMode = WlsunsetAuto,
+        wlsunsetEffectiveHighTemp = highTemp,
+        wlsunsetEffectiveLowTemp = lowTemp
       }
 
 -- ---------------------------------------------------------------------------

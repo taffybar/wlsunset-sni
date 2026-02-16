@@ -3,10 +3,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Standalone StatusNotifierItem service for controlling @wlsunset@.
 module Wlsunset.SNI
-  ( Config (..)
-  , defaultConfig
-  , runWlsunsetSNI
+  ( Config (..),
+    defaultConfig,
+    runWlsunsetSNI,
   )
 where
 
@@ -14,83 +15,83 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever, void, when)
-import Data.Int (Int32)
-import Data.String (fromString)
-import qualified Data.Text as T
 import DBus
 import DBus.Client
-  ( Client
-  , Interface (..)
-  , autoMethod
-  , connectSession
-  , defaultInterface
-  , export
-  , readOnlyProperty
-  , requestName
+  ( Client,
+    Interface (..),
+    autoMethod,
+    connectSession,
+    defaultInterface,
+    export,
+    readOnlyProperty,
+    requestName,
   )
 import DBus.Proxy (proxyAll)
 import qualified Data.ByteString as BS
 import qualified Data.GI.Base as GI
+import Data.Int (Int32)
+import Data.String (fromString)
+import qualified Data.Text as T
 import Foreign.C.Types (CInt (..))
 import Foreign.Ptr (FunPtr, Ptr)
 import Foreign.StablePtr
-  ( StablePtr
-  , castPtrToStablePtr
-  , castStablePtrToPtr
-  , deRefStablePtr
-  , freeStablePtr
-  , newStablePtr
+  ( StablePtr,
+    castPtrToStablePtr,
+    castStablePtrToPtr,
+    deRefStablePtr,
+    freeStablePtr,
+    newStablePtr,
   )
 import qualified GI.Dbusmenu as Dbusmenu
 import qualified GI.GLib as GLib
 import qualified GI.Gio as Gio
-import qualified GI.Gio.Objects.Cancellable as Gio
+import qualified StatusNotifier.Item.Client as I
+import qualified StatusNotifier.Watcher.Client as W
 import System.Exit (exitSuccess)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Log.Logger
-  ( Priority (..)
-  , getRootLogger
-  , saveGlobalLogger
-  , setLevel
+  ( Priority (..),
+    getRootLogger,
+    saveGlobalLogger,
+    setLevel,
   )
-
-import qualified StatusNotifier.Item.Client as I
-import qualified StatusNotifier.Watcher.Client as W
-
 import Wlsunset.Menu
 import Wlsunset.Process
 
 -- | Runtime configuration.
 data Config = Config
-  { configDBusName :: String
-  , configWlsunsetCommand :: String
-  , configHighTemp :: Int
-  , configLowTemp :: Int
-  , configPollIntervalSec :: Int
-  , configIconAuto :: String
-  , configIconHigh :: String
-  , configIconLow :: String
-  , configIconOff :: String
-  , configTitle :: String
-  , configLogLevel :: Priority
+  { configDBusName :: String,
+    configWlsunsetCommand :: String,
+    configHighTemp :: Int,
+    configLowTemp :: Int,
+    configPollIntervalSec :: Int,
+    configIconAuto :: String,
+    configIconHigh :: String,
+    configIconLow :: String,
+    configIconOff :: String,
+    configTitle :: String,
+    configLogLevel :: Priority
   }
 
+-- | Default runtime configuration.
 defaultConfig :: Config
 defaultConfig =
   Config
-    { configDBusName = "org.taffybar.WlsunsetSNI"
-    , configWlsunsetCommand = "wlsunset"
-    , configHighTemp = 6500
-    , configLowTemp = 4000
-    , configPollIntervalSec = 2
-    , configIconAuto = "video-display"
-    , configIconHigh = "video-display"
-    , configIconLow = "weather-clear-night"
-    , configIconOff = "process-stop"
-    , configTitle = "wlsunset"
-    , configLogLevel = WARNING
+    { configDBusName = "org.taffybar.WlsunsetSNI",
+      configWlsunsetCommand = "wlsunset",
+      configHighTemp = 6500,
+      configLowTemp = 4000,
+      configPollIntervalSec = 2,
+      configIconAuto = "video-display",
+      configIconHigh = "video-display",
+      configIconLow = "weather-clear-night",
+      configIconOff = "process-stop",
+      configTitle = "wlsunset",
+      configLogLevel = WARNING
     }
 
+-- | Run the SNI process, exporting item + menu services onto DBus and blocking
+-- forever.
 runWlsunsetSNI :: Config -> IO ()
 runWlsunsetSNI cfg@Config {..} = do
   setupLogging configLogLevel
@@ -116,10 +117,10 @@ runWlsunsetSNI cfg@Config {..} = do
 
   let wsCfg =
         WlsunsetConfig
-          { wlsunsetCommand = configWlsunsetCommand
-          , wlsunsetHighTemp = configHighTemp
-          , wlsunsetLowTemp = configLowTemp
-          , wlsunsetPollIntervalSec = configPollIntervalSec
+          { wlsunsetCommand = configWlsunsetCommand,
+            wlsunsetHighTemp = configHighTemp,
+            wlsunsetLowTemp = configLowTemp,
+            wlsunsetPollIntervalSec = configPollIntervalSec
           }
   wlsunset <- newWlsunset wsCfg
 
@@ -131,11 +132,11 @@ runWlsunsetSNI cfg@Config {..} = do
                 { onSetMode = \mode -> do
                     st0 <- getWlsunsetState wlsunset
                     when (not (wlsunsetRunning st0)) (startWlsunset wlsunset)
-                    cycleWlsunsetToMode wlsunset mode
-                , onToggle = toggleWlsunset wlsunset
-                , onSetFixedTemp = \t -> restartWlsunsetWithTemps wlsunset t t
-                , onResetTemps = restartWlsunsetWithTemps wlsunset configLowTemp configHighTemp
-                , onQuit = exitSuccess
+                    cycleWlsunsetToMode wlsunset mode,
+                  onToggle = toggleWlsunset wlsunset,
+                  onSetFixedTemp = \t -> restartWlsunsetWithTemps wlsunset t t,
+                  onResetTemps = restartWlsunsetWithTemps wlsunset configLowTemp configHighTemp,
+                  onQuit = exitSuccess
                 }
         newRoot <- buildMenu wsCfg st actions
         runOnGLibMain glibContext $
@@ -169,27 +170,27 @@ exportSNI :: Config -> Client -> String -> String -> Wlsunset -> IO ()
 exportSNI cfg client path menuPath wlsunset = do
   let iface =
         defaultInterface
-          { interfaceName = interfaceName_ "org.kde.StatusNotifierItem"
-          , interfaceMethods =
-              [ autoMethod "SecondaryActivate" (\(_x :: Int32) (_y :: Int32) -> toggleWlsunset wlsunset)
-              , autoMethod "Activate" (\(_x :: Int32) (_y :: Int32) -> (return () :: IO ()))
-              , autoMethod "ContextMenu" (\(_x :: Int32) (_y :: Int32) -> (return () :: IO ()))
-              , autoMethod "Scroll" (\(_delta :: Int32) (_orientation :: String) -> (return () :: IO ()))
-              ]
-          , interfaceProperties =
-              [ readOnlyProperty "Category" (pure ("ApplicationStatus" :: String))
-              , readOnlyProperty "Id" (pure ("wlsunset-sni" :: String))
-              , readOnlyProperty "Title" (pure (configTitle cfg))
-              , readOnlyProperty "Status" (pure ("Active" :: String))
-              , readOnlyProperty "WindowId" (pure (0 :: Int32))
-              , readOnlyProperty "IconThemePath" (pure ("" :: String))
-              , readOnlyProperty "IconName" (stateIconName cfg <$> getWlsunsetState wlsunset)
-              , readOnlyProperty "OverlayIconName" (pure ("" :: String))
-              , readOnlyProperty "ItemIsMenu" (pure True)
-              , readOnlyProperty "Menu" (pure (objectPath_ menuPath))
-              , readOnlyProperty "ToolTip" (getWlsunsetState wlsunset >>= tooltip cfg)
-              ]
-          , interfaceSignals = []
+          { interfaceName = interfaceName_ "org.kde.StatusNotifierItem",
+            interfaceMethods =
+              [ autoMethod "SecondaryActivate" (\(_x :: Int32) (_y :: Int32) -> toggleWlsunset wlsunset),
+                autoMethod "Activate" (\(_x :: Int32) (_y :: Int32) -> (return () :: IO ())),
+                autoMethod "ContextMenu" (\(_x :: Int32) (_y :: Int32) -> (return () :: IO ())),
+                autoMethod "Scroll" (\(_delta :: Int32) (_orientation :: String) -> (return () :: IO ()))
+              ],
+            interfaceProperties =
+              [ readOnlyProperty "Category" (pure ("ApplicationStatus" :: String)),
+                readOnlyProperty "Id" (pure ("wlsunset-sni" :: String)),
+                readOnlyProperty "Title" (pure (configTitle cfg)),
+                readOnlyProperty "Status" (pure ("Active" :: String)),
+                readOnlyProperty "WindowId" (pure (0 :: Int32)),
+                readOnlyProperty "IconThemePath" (pure ("" :: String)),
+                readOnlyProperty "IconName" (stateIconName cfg <$> getWlsunsetState wlsunset),
+                readOnlyProperty "OverlayIconName" (pure ("" :: String)),
+                readOnlyProperty "ItemIsMenu" (pure True),
+                readOnlyProperty "Menu" (pure (objectPath_ menuPath)),
+                readOnlyProperty "ToolTip" (getWlsunsetState wlsunset >>= tooltip cfg)
+              ],
+            interfaceSignals = []
           }
   export client (fromString path) iface
 

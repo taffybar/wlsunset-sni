@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | DBusMenu construction for the @wlsunset-sni@ tray item.
 module Wlsunset.Menu
-  ( MenuActions (..)
-  , buildMenu
+  ( MenuActions (..),
+    buildMenu,
   )
 where
 
@@ -16,17 +17,18 @@ import Wlsunset.Process
 
 -- | Actions invoked by menu items.
 data MenuActions = MenuActions
-  { onSetMode :: WlsunsetMode -> IO ()
-  , onToggle :: IO ()
-  , onSetFixedTemp :: Int -> IO ()
-  , onResetTemps :: IO ()
-  , onQuit :: IO ()
+  { onSetMode :: WlsunsetMode -> IO (),
+    onToggle :: IO (),
+    onSetFixedTemp :: Int -> IO (),
+    onResetTemps :: IO (),
+    onQuit :: IO ()
   }
 
 -- | Temperature presets from 2500K to 6500K in 500K increments.
 tempPresets :: [Int]
 tempPresets = [2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500]
 
+-- | Build a full DBusMenu tree for the current @wlsunset@ state.
 buildMenu :: WlsunsetConfig -> WlsunsetState -> MenuActions -> IO Menuitem
 buildMenu cfg st actions = do
   root <- menuitemNew
@@ -46,9 +48,9 @@ buildMenu cfg st actions = do
       lowT = T.pack (show effectiveLow <> "K")
       modes :: [(Text, WlsunsetMode)]
       modes =
-        [ ("Automatic", WlsunsetAuto)
-        , ("High Temp (" <> highT <> ")", WlsunsetForcedHighTemp)
-        , ("Low Temp (" <> lowT <> ")", WlsunsetForcedLowTemp)
+        [ ("Automatic", WlsunsetAuto),
+          ("High Temp (" <> highT <> ")", WlsunsetForcedHighTemp),
+          ("Low Temp (" <> lowT <> ")", WlsunsetForcedLowTemp)
         ]
 
   forM_ modes $ \(labelText, targetMode) -> do

@@ -5,7 +5,7 @@
 -- object path, on the same 'DBus.Client.Client' connection.
 --
 -- This is primarily used to host a DBusMenu (via @gi-dbusmenu@) on a separate
--- bus name, then proxy it onto the SNI item bus name, because the SNI 'Menu'
+-- bus name, then proxy it onto the SNI item bus name, because the SNI @Menu@
 -- property contains only an object path (no bus name).
 module DBus.Proxy
   ( proxyAll,
@@ -16,10 +16,10 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, catch)
 import Control.Monad (forM_, void, when)
 import Control.Monad.Trans.Class (lift)
-import Data.Maybe (listToMaybe)
 import DBus
 import DBus.Client
 import qualified DBus.Introspection as I
+import Data.Maybe (listToMaybe)
 import System.Log.Logger (Priority (..), logM)
 
 -- | Proxy every interface found by Introspect on (busName, pathToProxy), and
@@ -48,10 +48,11 @@ proxyAll client busName pathToProxy registrationPath = do
 introspectObject :: Client -> BusName -> ObjectPath -> IO (Either String I.Object)
 introspectObject client busName pathToProxy = do
   let callMsg =
-        (methodCall
-          pathToProxy
-          (interfaceName_ "org.freedesktop.DBus.Introspectable")
-          (memberName_ "Introspect"))
+        ( methodCall
+            pathToProxy
+            (interfaceName_ "org.freedesktop.DBus.Introspectable")
+            (memberName_ "Introspect")
+        )
           { methodCallDestination = Just busName
           }
   reply <- call client callMsg
@@ -83,26 +84,30 @@ buildAndRegisterInterface client busName pathToProxy registrationPath iIface = d
   forwardSignals client busName pathToProxy registrationPath (I.interfaceName iIface)
 
 buildInterface :: Client -> BusName -> ObjectPath -> I.Interface -> Interface
-buildInterface client busName pathToProxy I.Interface
-  { I.interfaceName = name
-  , I.interfaceMethods = methods
-  , I.interfaceSignals = signals
-  , I.interfaceProperties = properties
-  } =
-  Interface
-    { interfaceName = name
-    , interfaceMethods = map (buildMethod client busName pathToProxy name) methods
-    , interfaceProperties = map (buildProperty client busName pathToProxy name) properties
-    , interfaceSignals = signals
-    }
+buildInterface
+  client
+  busName
+  pathToProxy
+  I.Interface
+    { I.interfaceName = name,
+      I.interfaceMethods = methods,
+      I.interfaceSignals = signals,
+      I.interfaceProperties = properties
+    } =
+    Interface
+      { interfaceName = name,
+        interfaceMethods = map (buildMethod client busName pathToProxy name) methods,
+        interfaceProperties = map (buildProperty client busName pathToProxy name) properties,
+        interfaceSignals = signals
+      }
 
 buildMethod :: Client -> BusName -> ObjectPath -> InterfaceName -> I.Method -> Method
 buildMethod client busName pathToProxy _ifaceName introspectionMethod =
   Method
-    { methodName = I.methodName introspectionMethod
-    , inSignature = signature_ inTypes
-    , outSignature = signature_ outTypes
-    , methodHandler = lift . handler
+    { methodName = I.methodName introspectionMethod,
+      inSignature = signature_ inTypes,
+      outSignature = signature_ outTypes,
+      methodHandler = lift . handler
     }
   where
     args = I.methodArgs introspectionMethod
@@ -113,8 +118,8 @@ buildMethod client busName pathToProxy _ifaceName introspectionMethod =
         <$> call
           client
           theMethodCall
-            { methodCallPath = pathToProxy
-            , methodCallDestination = Just busName
+            { methodCallPath = pathToProxy,
+              methodCallDestination = Just busName
             }
 
 buildReply :: Either MethodError MethodReturn -> Reply
@@ -124,13 +129,13 @@ buildReply (Right r) = ReplyReturn (methodReturnBody r)
 buildProperty :: Client -> BusName -> ObjectPath -> InterfaceName -> I.Property -> Property
 buildProperty client busName pathToProxy ifaceName introspectionProperty =
   Property
-    { propertyName = memberName_ (I.propertyName introspectionProperty)
-    , propertyType = I.propertyType introspectionProperty
-    , propertyGetter =
+    { propertyName = memberName_ (I.propertyName introspectionProperty),
+      propertyType = I.propertyType introspectionProperty,
+      propertyGetter =
         if I.propertyRead introspectionProperty
           then Just getter
-          else Nothing
-    , propertySetter =
+          else Nothing,
+      propertySetter =
         if I.propertyWrite introspectionProperty
           then Just setter
           else Nothing
@@ -161,9 +166,9 @@ forwardSignals client busName pathToProxy registrationPath ifaceName = do
                 else sig
           matchRule =
             matchAny
-              { matchPath = Just pathToProxy
-              , matchInterface = Just ifaceName
-              , matchSender = Just owner
+              { matchPath = Just pathToProxy,
+                matchInterface = Just ifaceName,
+                matchSender = Just owner
               }
       void $ addMatch client matchRule forwardSignal
 
@@ -171,8 +176,8 @@ getNameOwner :: Client -> BusName -> IO (Maybe BusName)
 getNameOwner client name = do
   let callMsg =
         (methodCall dbusPath (interfaceName_ "org.freedesktop.DBus") (memberName_ "GetNameOwner"))
-          { methodCallDestination = Just dbusName
-          , methodCallBody = [toVariant (formatBusName name)]
+          { methodCallDestination = Just dbusName,
+            methodCallBody = [toVariant (formatBusName name)]
           }
   reply <- call client callMsg
   case reply of
