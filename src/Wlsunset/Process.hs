@@ -28,6 +28,8 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever, replicateM_, void, when)
 import Data.List (isPrefixOf)
+import qualified Data.List as List
+import System.FilePath (takeFileName)
 import System.Posix.Signals (sigUSR1, signalProcess)
 import System.Posix.Types (CPid (..))
 import System.Process (readProcess, spawnCommand)
@@ -105,20 +107,41 @@ broadcastUpdate ws f =
 -- Process helpers
 -- ---------------------------------------------------------------------------
 
-pgrepWlsunset :: IO [CPid]
-pgrepWlsunset =
-  (parsePids <$> readProcess "pgrep" ["-x", "wlsunset"] "")
-    `catch` (\(_ :: SomeException) -> pure [])
+pgrepWlsunset :: WlsunsetConfig -> IO [CPid]
+pgrepWlsunset cfg = do
+  let exactNames = candidateProcessNames cfg
+  pidsFromExact <- concat <$> mapM pgrepExact exactNames
+  if null pidsFromExact
+    then do
+      -- Fallback for wrapped command lines where argv[0] isn't the desired
+      -- executable name but still contains it in the full command.
+      pidsFromFuzzy <- concat <$> mapM pgrepFuzzy exactNames
+      pure (dedupePids pidsFromFuzzy)
+    else pure (dedupePids pidsFromExact)
   where
+    pgrepExact name =
+      (parsePids <$> readProcess "pgrep" ["-x", name] "")
+        `catch` (\(_ :: SomeException) -> pure [])
+    pgrepFuzzy name =
+      (parsePids <$> readProcess "pgrep" ["-f", name] "")
+        `catch` (\(_ :: SomeException) -> pure [])
     parsePids = map (CPid . fromIntegral) . concatMap toList . lines
     toList s = maybe [] pure (readMaybe s :: Maybe Int)
+    dedupePids = List.nub
+
+candidateProcessNames :: WlsunsetConfig -> [String]
+candidateProcessNames cfg =
+  let exeFromCommand = case words (wlsunsetCommand cfg) of
+        [] -> "wlsunset"
+        (exe : _) -> takeFileName exe
+   in List.nub (filter (not . null) [exeFromCommand, "wlsunset"])
 
 sendUSR1 :: CPid -> IO ()
 sendUSR1 = signalProcess sigUSR1
 
 pollWlsunset :: Wlsunset -> IO ()
 pollWlsunset ws = do
-  pids <- pgrepWlsunset
+  pids <- pgrepWlsunset (wsCfg ws)
   let isRunning = not (null pids)
   broadcastUpdate ws $ \old ->
     let wasRunning = wlsunsetRunning old
@@ -136,7 +159,7 @@ pollWlsunset ws = do
 -- state in the Auto -> ForcedHigh -> ForcedLow -> Auto ring.
 cycleWlsunsetMode :: Wlsunset -> IO ()
 cycleWlsunsetMode ws = do
-  pids <- pgrepWlsunset
+  pids <- pgrepWlsunset (wsCfg ws)
   case pids of
     [] -> pure ()
     _ -> do
@@ -173,7 +196,7 @@ startWlsunset ws = do
 -- | Stop all running @wlsunset@ processes with @SIGTERM@.
 stopWlsunset :: Wlsunset -> IO ()
 stopWlsunset ws = do
-  pids <- pgrepWlsunset
+  pids <- pgrepWlsunset (wsCfg ws)
   mapM_ (signalProcess 15) pids
   broadcastUpdate ws $ \old -> old {wlsunsetRunning = False, wlsunsetMode = WlsunsetAuto}
 
@@ -186,7 +209,7 @@ toggleWlsunset ws = do
 -- | Restart @wlsunset@ with explicit temperature bounds.
 restartWlsunsetWithTemps :: Wlsunset -> Int -> Int -> IO ()
 restartWlsunsetWithTemps ws lowTemp highTemp = do
-  pids <- pgrepWlsunset
+  pids <- pgrepWlsunset (wsCfg ws)
   mapM_ (signalProcess 15) pids
   let cmd = buildCommandWithTemps (wlsunsetCommand (wsCfg ws)) lowTemp highTemp
   void $ spawnCommand cmd
