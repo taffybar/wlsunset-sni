@@ -27,7 +27,8 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever, replicateM_, void, when)
-import Data.List (isPrefixOf)
+import Data.Char (toLower)
+import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.List as List
 import System.FilePath (takeFileName)
 import System.Posix.Signals (sigUSR1, signalProcess)
@@ -111,19 +112,10 @@ pgrepWlsunset :: WlsunsetConfig -> IO [CPid]
 pgrepWlsunset cfg = do
   let exactNames = candidateProcessNames cfg
   pidsFromExact <- concat <$> mapM pgrepExact exactNames
-  if null pidsFromExact
-    then do
-      -- Fallback for wrapped command lines where argv[0] isn't the desired
-      -- executable name but still contains it in the full command.
-      pidsFromFuzzy <- concat <$> mapM pgrepFuzzy exactNames
-      pure (dedupePids pidsFromFuzzy)
-    else pure (dedupePids pidsFromExact)
+  pure (dedupePids pidsFromExact)
   where
     pgrepExact name =
       (parsePids <$> readProcess "pgrep" ["-x", name] "")
-        `catch` (\(_ :: SomeException) -> pure [])
-    pgrepFuzzy name =
-      (parsePids <$> readProcess "pgrep" ["-f", name] "")
         `catch` (\(_ :: SomeException) -> pure [])
     parsePids = map (CPid . fromIntegral) . concatMap toList . lines
     toList s = maybe [] pure (readMaybe s :: Maybe Int)
@@ -134,7 +126,11 @@ candidateProcessNames cfg =
   let exeFromCommand = case words (wlsunsetCommand cfg) of
         [] -> "wlsunset"
         (exe : _) -> takeFileName exe
-   in List.nub (filter (not . null) [exeFromCommand, "wlsunset"])
+      exeLooksLikeWlsunset =
+        "wlsunset" `isInfixOf` map toLower exeFromCommand
+      configuredName =
+        if exeLooksLikeWlsunset then [exeFromCommand] else []
+   in List.nub (configuredName ++ ["wlsunset"])
 
 sendUSR1 :: CPid -> IO ()
 sendUSR1 = signalProcess sigUSR1
